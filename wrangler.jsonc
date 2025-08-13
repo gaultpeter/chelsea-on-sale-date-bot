@@ -1,5 +1,14 @@
 {
 	"name": "chelsea-sale-monitor",
 	"compatibility_date": "2025-08-13",
-	"main": "worker.js"
-}
+	"main": "worker.js",
+  
+	"kv_namespaces": [
+	  {
+		"binding": "MY_KV",
+		"id": "chelsea_sale_kv"
+	  }
+	],
+
+  }
+  
