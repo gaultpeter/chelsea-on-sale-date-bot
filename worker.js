@@ -113,8 +113,8 @@ async function sendDiscordNotification(webhookUrl, pageUrl, newestRow, env) {
   const userId = env.DISCORD_USER_ID;
 
   const content = newestRow
-  ? `⚡⚡ Chelsea on sale dates updated! <@${userId}> \n\n${newestRow}\n\n ${pageUrl}`
-  : ` ⚡⚡ Chelsea on sale dates updated! <@${userId}> \n\n${pageUrl}`;
+  ? `⚡ Chelsea on sale dates updated! <@${userId}> \n\n${newestRow}\n\n ${pageUrl}`
+  : ` ⚡ Chelsea on sale dates updated! <@${userId}> \n\n${pageUrl}`;
 
 
   console.log("Sending discord notification!")
