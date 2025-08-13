@@ -1,4 +1,4 @@
-# Chelsea On-Sale Date Bot Setup Guide
+# Chelsea On-Sale Date Bot
 
 This guide covers creating a Discord webhook, a Cloudflare Worker, KV storage, secret binding, and deployment.
 
