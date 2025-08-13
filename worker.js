@@ -110,7 +110,7 @@ async function sendDiscordNotification(webhookUrl, pageUrl, newestRow) {
 
   console.log(newestRow);
 
-  const userId = "137946857954476032"; // Replace with your actual user ID
+  const userId = await env.DISCORD_USER_ID.get();
 
   const content = newestRow
   ? `⚡⚡ Chelsea on sale dates updated! <@${userId}> \n\n${newestRow}\n\n ${pageUrl}`

@@ -37,8 +37,8 @@ This guide covers creating a Discord webhook, a Cloudflare Worker, KV storage, s
 
 | Variable Name | Value |
 |---------------|-------|
-| `WEBHOOK_URL` | Your Discord webhook URL |
-| `USER_ID`     | Your Discord user ID |
+| `DISCORD_WEBHOOK_URL` | Your Discord webhook URL |
+| `DISCORD_USER_ID`     | Your Discord user ID |
 
 > Note: KV will be used to store the last sent date checksum.  
 
@@ -47,8 +47,8 @@ This guide covers creating a Discord webhook, a Cloudflare Worker, KV storage, s
 ## 5. Bind KV Namespace and Secrets
 
 1. In **Settings → Variables → KV Namespaces**, click **Add binding**:  
-   - **Variable name:** `LAST_SENT_KV`  
-   - **Namespace:** select the KV namespace you created (`ON_SALE_DATES`)  
+   - **Variable name:** `MY_KV`  
+   - **Namespace:** select the KV namespace you created (`MY_KV`)  
 
 2. Confirm your secret variables are bound under **Secrets**.  
 
@@ -65,7 +65,7 @@ This guide covers creating a Discord webhook, a Cloudflare Worker, KV storage, s
 ## 7. Optional: Set up a Cron Trigger
 
 1. Go to **Triggers → Add Cron Trigger**.  
-2. Set the schedule, e.g., `*/15 * * * *` to run every 15 minutes.  
+2. Set the schedule, e.g., `0 19 * * mon,tue,wed,thu,fri` to run every weekday at 7pm.  
 
 ---
 
@@ -73,6 +73,6 @@ This guide covers creating a Discord webhook, a Cloudflare Worker, KV storage, s
 
 1. Cron trigger calls your worker.  
 2. Worker scrapes Chelsea FC ticket on-sale dates.  
-3. Checks KV (`LAST_SENT_KV`) for previous date checksum.  
+3. Checks KV (`MY_KV`) for previous date checksum.  
 4. If new date found, sends Discord webhook message with `<@USER_ID>` mention.  
 5. Updates KV with new checksum.
