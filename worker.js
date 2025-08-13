@@ -12,7 +12,7 @@ export default {
 // Main monitor function
 async function runMonitor(env) {
   const url = "https://www.chelseafc.com/en/all-on-sale-dates-men";
-  const discordWebHookUrl = await env.DISCORD_WEBHOOK_URL.get();
+  const discordWebHookUrl = env.DISCORD_WEBHOOK_URL;
 
   const html = await fetchPage(url);
   const tableHtml = extractTableFromDataProps(html);
@@ -110,7 +110,7 @@ async function sendDiscordNotification(webhookUrl, pageUrl, newestRow, env) {
 
   console.log(newestRow);
 
-  const userId = await env.DISCORD_USER_ID.get();
+  const userId = env.DISCORD_USER_ID;
 
   const content = newestRow
   ? `⚡⚡ Chelsea on sale dates updated! <@${userId}> \n\n${newestRow}\n\n ${pageUrl}`
