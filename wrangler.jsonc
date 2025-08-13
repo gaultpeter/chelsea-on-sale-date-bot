@@ -1,5 +1,5 @@
 {
 	"name": "chelsea-sale-monitor",
 	"compatibility_date": "2025-08-13",
-	"main": "src/worker.ts"
+	"main": "worker.js"
 }
