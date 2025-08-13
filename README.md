@@ -1,4 +1,4 @@
-# Chelsea On-Sale Date Bot
+Chelsea On-Sale Date Bot
 
 This is a Cloudflare Worker designed to monitor the official Chelsea FC website for updates to ticket on-sale dates. When a new on-sale date is detected, it sends an automated notification to a specified Discord channel, mentioning you directly to ensure you don't miss any updates.
 Features
@@ -38,101 +38,9 @@ Step 2: Set up the Cloudflare Worker
 
     Go to the worker's page and click Edit code.
 
-    Paste the following code into the editor, replacing the placeholder values with your own.
-
-// This is the URL of the Chelsea FC on-sale dates page.
-const PAGE_URL = "https://www.chelseafc.com/en/all-on-sale-dates-men";
-
-// This is the Discord webhook URL from Step 1.
-const WEBHOOK_URL = "YOUR_DISCORD_WEBHOOK_URL_HERE";
-
-// This is your Discord User ID, used to mention you.
-// To get your User ID:
-// 1. Go to Discord Settings > Advanced.
-// 2. Enable Developer Mode.
-// 3. Right-click your name and select "Copy User ID".
-// 4. Paste the long number here.
-const USER_ID = "YOUR_DISCORD_USER_ID_HERE";
-
-// The main function that runs when the worker is triggered.
-async function handleRequest() {
-  try {
-    const pageResponse = await fetch(PAGE_URL);
-    if (!pageResponse.ok) {
-      throw new Error(`Failed to fetch page: ${pageResponse.statusText}`);
-    }
-
-    const pageText = await pageResponse.text();
-    
-    // Simple scraping logic to find the first 'on-sale' row.
-    const regex = /<tr class="ticket-on-sale__row">(.*?)<\/tr>/s;
-    const match = pageText.match(regex);
-    
-    let latestRow = null;
-    if (match && match[1]) {
-      // Clean up the HTML to be more readable for Discord.
-      latestRow = match[1]
-        .replace(/<td class="ticket-on-sale__cell">(.*?)<\/td>/g, (match, p1) => `⚽️ ${p1.trim()}\n`)
-        .replace(/<span.*?>(.*?)<\/span>/g, '$1')
-        .replace(/<br>/g, '')
-        .replace(/<a.*?>(.*?)<\/a>/g, '$1')
-        .replace(/<p class="ticket-on-sale__title">(.*?)<\/p>/g, '⚽️ Match Date: $1')
-        .replace(/<p class="ticket-on-sale__subtitle">(.*?)<\/p>/g, 'Team: $1')
-        .replace(/<p class="ticket-on-sale__copy">(.*?)<\/p>/g, 'Kick-off Time: $1')
-        .replace(/<div class="ticket-on-sale__tag">(.*?)<\/div>/g, 'On Sale Date: $1');
-    }
-
-    // A simple, persistent storage key to track the last sent notification.
-    const LAST_SENT_KEY = 'last_sent_date_checksum';
-    
-    // Get the previous state from Cloudflare's durable object or KV.
-    // For this simple example, we will simulate persistent storage.
-    const lastSentChecksum = await Deno.env.get(LAST_SENT_KEY);
-
-    const currentChecksum = latestRow ? btoa(latestRow) : null;
-    
-    if (currentChecksum && currentChecksum !== lastSentChecksum) {
-      // New information found, send the Discord notification.
-      let discordMessageContent = `⚡ Chelsea on sale dates updated! <@!${USER_ID}> \n\n${latestRow}\n\n${PAGE_URL}`;
-      
-      const discordResponse = await fetch(WEBHOOK_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content: discordMessageContent })
-      });
-
-      if (!discordResponse.ok) {
-        throw new Error(`Failed to send Discord notification: ${discordResponse.statusText}`);
-      }
-
-      // Update the stored checksum to prevent repeated notifications.
-      await Deno.env.set(LAST_SENT_KEY, currentChecksum);
-    }
-    
-    return new Response("Worker ran successfully.", { status: 200 });
-    
-  } catch (error) {
-    console.error(error);
-    return new Response(`Error: ${error.message}`, { status: 500 });
-  }
-}
-
-// Attach the main function to the Worker's fetch event listener.
-self.addEventListener('fetch', event => {
-  event.respondWith(handleRequest());
-});
-
-
 Step 3: Configure the Code
 
-Inside the code you just pasted, find these lines and replace the placeholder values:
-
-// This is the Discord webhook URL from Step 1.
-const WEBHOOK_URL = "YOUR_DISCORD_WEBHOOK_URL_HERE";
-
-// This is your Discord User ID, used to mention you.
-const USER_ID = "YOUR_DISCORD_USER_ID_HERE";
-
+Inside the code, find the lines for WEBHOOK_URL and USER_ID and replace the placeholder values.
 Step 4: Add the Storage Variable
 
 To prevent the worker from sending a notification every time it runs, it needs a way to remember the last state. Cloudflare Workers can use a variety of storage methods, but a simple way is using an Environment Variable.
