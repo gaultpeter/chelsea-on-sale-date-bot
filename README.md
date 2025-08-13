@@ -1,4 +1,4 @@
-Chelsea On-Sale Date Bot
+# Chelsea On-Sale Date Bot
 
 This is a Cloudflare Worker designed to monitor the official Chelsea FC website for updates to ticket on-sale dates. When a new on-sale date is detected, it sends an automated notification to a specified Discord channel, mentioning you directly to ensure you don't miss any updates.
 Features
