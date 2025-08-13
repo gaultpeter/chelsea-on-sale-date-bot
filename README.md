@@ -26,7 +26,8 @@ This guide covers creating a Discord webhook, a Cloudflare Worker, KV storage, s
 
 1. Go to **Workers → KV → Create namespace**.  
 2. Name the namespace (e.g., `ON_SALE_DATES`).  
-3. Copy the **Namespace ID**; you’ll need it when binding.  
+3. Copy the **Namespace ID**; you’ll need it when binding.
+4. Update the ID in the wrangle.jsonc with the ID of the KV namespace.  
 
 ---
 
