@@ -1,81 +1,78 @@
-Chelsea On-Sale Date Bot
+# Chelsea On-Sale Date Bot Setup Guide
 
-This is a Cloudflare Worker designed to monitor the official Chelsea FC website for updates to ticket on-sale dates. When a new on-sale date is detected, it sends an automated notification to a specified Discord channel, mentioning you directly to ensure you don't miss any updates.
-Features
+This guide covers creating a Discord webhook, a Cloudflare Worker, KV storage, secret binding, and deployment.
 
-    Website Monitoring: Automatically checks the Chelsea FC on-sale dates page for new information.
+---
 
-    Discord Integration: Sends a formatted message to a Discord channel via a webhook.
+## 1. Create a Discord Webhook
 
-    Personalized Mentions: Pings a specific user in Discord to notify them of an update.
+1. Open Discord and go to your server.  
+2. Navigate to **Server Settings → Integrations → Webhooks → Create Webhook**.  
+3. Give it a name (e.g., `Chelsea Bot`) and select the channel for notifications.  
+4. Click **Copy Webhook URL** and save it; you’ll need it later.  
 
-Prerequisites
+---
 
-To set up and run this bot, you will need:
+## 2. Create a Cloudflare Worker
 
-    A Discord server where you have permission to create webhooks.
+1. Log in to your [Cloudflare dashboard](https://dash.cloudflare.com).  
+2. Navigate to **Workers & Pages → Create a Worker**.  
+3. Name your worker (e.g., `chelsea-on-sale-bot`).  
+4. Click **Edit code** to open the code editor.  
 
-    A Cloudflare account to run the worker script.
+---
 
-Setup Instructions
-Step 1: Set up the Discord Webhook
+## 3. Create KV Namespace
 
-    In your Discord server, go to Server Settings > Integrations.
+1. Go to **Workers → KV → Create namespace**.  
+2. Name the namespace (e.g., `ON_SALE_DATES`).  
+3. Copy the **Namespace ID**; you’ll need it when binding.  
 
-    Click Create Webhook.
+---
 
-    Give the webhook a name (e.g., "Chelsea Bot") and select the channel where you want the notifications to be sent.
+## 4. Add Secrets (Environment Variables)
 
-    Click Copy Webhook URL and save this URL somewhere safe. You will need it in the next step.
+1. In your worker, go to **Settings → Variables → Add variable**.  
+2. Add the following secrets:  
 
-Step 2: Set up the Cloudflare Worker
+| Variable Name | Value |
+|---------------|-------|
+| `WEBHOOK_URL` | Your Discord webhook URL |
+| `USER_ID`     | Your Discord user ID |
 
-    Log in to your Cloudflare account and navigate to the Workers & Pages dashboard.
+> Note: KV will be used to store the last sent date checksum.  
 
-    Click Create Application and then Create Worker.
+---
 
-    Give your worker a name (e.g., chelsea-on-sale-bot) and click Deploy.
+## 5. Bind KV Namespace and Secrets
 
-    Go to the worker's page and click Edit code.
+1. In **Settings → Variables → KV Namespaces**, click **Add binding**:  
+   - **Variable name:** `LAST_SENT_KV`  
+   - **Namespace:** select the KV namespace you created (`ON_SALE_DATES`)  
 
-Step 3: Configure the Code
+2. Confirm your secret variables are bound under **Secrets**.  
 
-Inside the code, find the lines for WEBHOOK_URL and USER_ID and replace the placeholder values.
-Step 4: Add the Storage Variable
+---
 
-To prevent the worker from sending a notification every time it runs, it needs a way to remember the last state. Cloudflare Workers can use a variety of storage methods, but a simple way is using an Environment Variable.
+## 6. Deploy Worker
 
-    In your worker's dashboard, go to the Settings tab.
+1. In the worker editor, paste your bot code.  
+2. Save changes.  
+3. Click **Deploy**.  
 
-    Find the Variables section.
+---
 
-    Add a new variable:
+## 7. Optional: Set up a Cron Trigger
 
-        Variable Name: last_sent_date_checksum
+1. Go to **Triggers → Add Cron Trigger**.  
+2. Set the schedule, e.g., `*/15 * * * *` to run every 15 minutes.  
 
-        Value: Leave this field empty.
+---
 
-The worker will use this variable to store a "checksum" of the last on-sale date information it found. It will only send a new notification if the checksum changes.
-Step 5: Set up a Cron Trigger
+## 8. How it Works
 
-For the worker to run automatically, you need to set up a Cron trigger.
-
-    In your worker's dashboard, go to the Triggers tab.
-
-    Click Add Cron Trigger.
-
-    Set the schedule to something like */15 * * * * to have it run every 15 minutes. This is a good balance between responsiveness and not hitting the API too frequently.
-
-How it Works
-
-    The Cloudflare Worker is triggered by the Cron schedule.
-
-    It makes a request to the Chelsea FC on-sale dates page.
-
-    It scrapes the HTML to find the most recent ticket information.
-
-    It compares this new information to a "checksum" stored from the last run.
-
-    If the information has changed (i.e., new dates are posted), it constructs a message and sends it to the Discord webhook.
-
-    The Discord webhook receives the message and sends a notification to the channel, mentioning your user ID.
+1. Cron trigger calls your worker.  
+2. Worker scrapes Chelsea FC ticket on-sale dates.  
+3. Checks KV (`LAST_SENT_KV`) for previous date checksum.  
+4. If new date found, sends Discord webhook message with `<@USER_ID>` mention.  
+5. Updates KV with new checksum.
