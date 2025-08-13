@@ -31,7 +31,7 @@ async function runMonitor(env) {
   if (oldHash && oldHash != newHash) {
     // Extract newest row (<tr>) for Discord
     const newestRow = extractTicketInformation(tableHtml);
-    await sendDiscordNotification(discordWebHookUrl, url, newestRow);
+    await sendDiscordNotification(discordWebHookUrl, url, newestRow, env);
   }
 
   await env.MY_KV.put("lastHash", newHash);
@@ -104,7 +104,7 @@ async function computeHash(text) {
 }
 
 // Send a notification to Discord
-async function sendDiscordNotification(webhookUrl, pageUrl, newestRow) {
+async function sendDiscordNotification(webhookUrl, pageUrl, newestRow, env) {
   if (!webhookUrl) throw new Error("Discord webhook URL not set!");
 
 
