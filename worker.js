@@ -52,7 +52,7 @@ async function sendDiscordNotification(webhookUrl, pageUrl, env) {
 
   const userId = env.DISCORD_USER_ID;
 
-  const content = `⚡ Chelsea on sale dates has changed! <@${userId}> \n\n${pageUrl}`;
+  const content = `⚡ Chelsea on sale dates has changed! <@${userId}> - ${pageUrl}`;
 
   console.log("Sending Discord notification!");
 
