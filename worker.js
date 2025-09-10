@@ -15,26 +15,40 @@ async function runMonitor(env) {
   const discordWebHookUrl = env.DISCORD_WEBHOOK_URL;
 
   const html = await fetchPage(url);
-  const tableHtml = extractTableFromDataProps(html);
-  if (!tableHtml) {
-    console.log("Could not find table in page HTML");
+  const tables = extractAllTablesFromDataProps(html);
+  if (!tables) {
+    console.log("Could not find tables in page HTML");
     return;
   }
 
-  console.log("Extracted Table HTML:\n", tableHtml);
+  // Filter to only include home games (exclude away games)
+  const homeTables = tables.filter(table => !table.header.toLowerCase().includes('away'));
+  
+  console.log(`Found ${tables.length} total tables:`, tables.map(t => t.header));
+  console.log(`Monitoring ${homeTables.length} home game tables:`, homeTables.map(t => t.header));
 
-  const newHash = await computeHash(tableHtml);
-  const oldHash = await env.MY_KV.get("lastHash");
-  console.log("oldHash", oldHash);
-  console.log("newHash", newHash);
+  // Check each home game table for changes
+  for (const tableData of homeTables) {
+    const { header, table } = tableData;
+    const tableHash = await computeHash(table);
+    const oldHashKey = `lastHash_${header.replace(/\s+/g, '_')}`;
+    const oldHash = await env.MY_KV.get(oldHashKey);
+    
+    console.log(`Table: ${header}`);
+    console.log("oldHash", oldHash);
+    console.log("newHash", tableHash);
 
-  if (oldHash && oldHash != newHash) {
-    // Extract newest row (<tr>) for Discord
-    const newestRow = extractTicketInformation(tableHtml);
-    await sendDiscordNotification(discordWebHookUrl, url, newestRow, env);
+    if (oldHash && oldHash == tableHash) {
+      // Extract newest row for this table
+      const newestRow = extractTicketInformation(table, header);
+      if (newestRow) {
+        await sendDiscordNotification(discordWebHookUrl, url, newestRow, env);
+      }
+    }
+
+    // Store the new hash for this table
+    await env.MY_KV.put(oldHashKey, tableHash);
   }
-
-  await env.MY_KV.put("lastHash", newHash);
 }
 
 // Fetch the HTML of the page
@@ -43,8 +57,8 @@ async function fetchPage(url) {
   return await res.text();
 }
 
-// Extract first <table> inside the first GenericContentBlock's data-props
-function extractTableFromDataProps(html) {
+// Extract all <table> elements inside the first GenericContentBlock's data-props
+function extractAllTablesFromDataProps(html) {
   const divMatch = html.match(/<div\s+data-component="GenericContentBlock"\s+data-props="([^"]+)">/i);
   if (!divMatch) return null;
 
@@ -53,17 +67,31 @@ function extractTableFromDataProps(html) {
     const data = JSON.parse(jsonStr);
     const bodyHtml = data.body;
 
-    const tableMatch = bodyHtml.match(/<table[\s\S]*?<\/table>/i);
-    if (!tableMatch) return null;
+    // Extract all tables with their preceding headers
+    const tables = [];
+    const tableMatches = bodyHtml.match(/<h2[^>]*>(.*?)<\/h2>[\s\S]*?<table[\s\S]*?<\/table>/gi);
+    
+    if (tableMatches) {
+      tableMatches.forEach(tableSection => {
+        const headerMatch = tableSection.match(/<h2[^>]*>(.*?)<\/h2>/i);
+        const tableMatch = tableSection.match(/<table[\s\S]*?<\/table>/i);
+        
+        if (headerMatch && tableMatch) {
+          const header = headerMatch[1].trim();
+          const table = tableMatch[0];
+          tables.push({ header, table });
+        }
+      });
+    }
 
-    return tableMatch[0];
+    return tables.length > 0 ? tables : null;
   } catch (err) {
     console.log("Error parsing JSON:", err);
     return null;
   }
 }
 
-function extractTicketInformation(tableHtml) {
+function extractTicketInformation(tableHtml, tableHeader) {
   const trMatches = tableHtml.match(/<tr[\s\S]*?<\/tr>/gi);
   
   if (!trMatches || trMatches.length < 2) {
@@ -71,25 +99,47 @@ function extractTicketInformation(tableHtml) {
     return null; // Handle cases where there's no data or only a header row
   }
   
-  const lastRow = trMatches[trMatches.length - 1];
-  console.log(lastRow);
-
-  const regex = /<p>(.*?)<\/p><\/td><td><p>(.*?)<\/p><\/td><td><p>(.*?)<\/p><\/td><td><p>.*?<\/p><\/td><td><p>(.*?)<\/p>/;
-  const match = lastRow.match(regex);
-
-  if (match) {
-    const matchDate = match[1].trim();
-    const teamName = match[2].trim();
-    const kickOffTime = match[3].trim();
-    const onSaleDate = match[4].trim();
-
-    const message = `⚽️ Match Date: ${matchDate}\n\n🆚 Team: ${teamName}\n\n⏰ Kick-off Time: ${kickOffTime}\n\n🎟️ On Sale Date: ${onSaleDate}`;
-
-    return message;
-  } else {
-    console.log("Could not extract ticket information from the last row.");
-    return null; // Return null if the regex doesn't match
+  // Extract headers from the first row
+  const headerRow = trMatches[0];
+  const headerMatches = headerRow.match(/<th[^>]*><p[^>]*>(.*?)<\/p><\/th>/gi);
+  
+  if (!headerMatches) {
+    console.log("No headers found in table.");
+    return null;
   }
+  
+  // Extract headers text
+  const headers = headerMatches.map(header => {
+    const match = header.match(/<p[^>]*>(.*?)<\/p>/);
+    return match ? match[1].trim() : '';
+  });
+  
+  // Extract data from the last row
+  const lastRow = trMatches[trMatches.length - 1];
+  const dataMatches = lastRow.match(/<td[^>]*><p[^>]*>(.*?)<\/p><\/td>/gi);
+  
+  if (!dataMatches) {
+    console.log("No data found in last row.");
+    return null;
+  }
+  
+  // Extract data text
+  const data = dataMatches.map(cell => {
+    const match = cell.match(/<p[^>]*>(.*?)<\/p>/);
+    return match ? match[1].trim() : '';
+  });
+  
+  // Create human-readable formatted message with table type
+  let formattedMessage = `**Latest Chelsea Ticket Update - ${tableHeader}:**\n\n`;
+  
+  for (let i = 0; i < Math.min(headers.length, data.length); i++) {
+    if (headers[i] && data[i]) {
+      formattedMessage += `**${headers[i]}:** ${data[i]}\n`;
+    }
+  }
+  
+  console.log("Formatted message:", formattedMessage);
+  return formattedMessage;
 }
 
 // Compute SHA-256 hash of a string
@@ -104,18 +154,17 @@ async function computeHash(text) {
 }
 
 // Send a notification to Discord
-async function sendDiscordNotification(webhookUrl, pageUrl, newestRow, env) {
+async function sendDiscordNotification(webhookUrl, pageUrl, formattedMessage, env) {
   if (!webhookUrl) throw new Error("Discord webhook URL not set!");
 
-
-  console.log(newestRow);
+  console.log("Formatted message:", formattedMessage);
 
   const userId = env.DISCORD_USER_ID;
 
-  const content = newestRow
-  ? `⚡ Chelsea on sale dates updated! <@${userId}> \n\n${newestRow}\n\n ${pageUrl}`
-  : ` ⚡ Chelsea on sale dates updated! <@${userId}> \n\n${pageUrl}`;
-
+  // Create a human-readable message for any Chelsea game update
+  const content = formattedMessage
+  ? `⚡ Chelsea ticket information updated! <@${userId}>\n\n${formattedMessage}\n\nView full details: ${pageUrl}`
+  : `⚡ Chelsea ticket information updated! <@${userId}>\n\nView full details: ${pageUrl}`;
 
   console.log("Sending discord notification!")
   
