@@ -38,11 +38,13 @@ async function runMonitor(env) {
     console.log("oldHash", oldHash);
     console.log("newHash", tableHash);
 
-    if (oldHash && oldHash == tableHash) {
-      // Extract newest row for this table
-      const newestRow = extractTicketInformation(table, header);
-      if (newestRow) {
-        await sendDiscordNotification(discordWebHookUrl, url, newestRow, env);
+    if (oldHash && oldHash !== tableHash) {
+      // Extract any changed rows for this table
+      const changedRows = extractChangedRows(table, header, env);
+      if (changedRows && changedRows.length > 0) {
+        for (const row of changedRows) {
+          await sendDiscordNotification(discordWebHookUrl, url, row, env);
+        }
       }
     }
 
@@ -89,6 +91,73 @@ function extractAllTablesFromDataProps(html) {
     console.log("Error parsing JSON:", err);
     return null;
   }
+}
+
+async function extractChangedRows(tableHtml, tableHeader, env) {
+  const trMatches = tableHtml.match(/<tr[\s\S]*?<\/tr>/gi);
+  
+  if (!trMatches || trMatches.length < 2) {
+    console.log("No valid table rows found.");
+    return [];
+  }
+  
+  // Extract headers from the first row
+  const headerRow = trMatches[0];
+  const headerMatches = headerRow.match(/<th[^>]*><p[^>]*>(.*?)<\/p><\/th>/gi);
+  
+  if (!headerMatches) {
+    console.log("No headers found in table.");
+    return [];
+  }
+  
+  // Extract headers text
+  const headers = headerMatches.map(header => {
+    const match = header.match(/<p[^>]*>(.*?)<\/p>/);
+    return match ? match[1].trim() : '';
+  });
+  
+  const changedRows = [];
+  
+  // Check each data row (skip header row)
+  for (let i = 1; i < trMatches.length; i++) {
+    const row = trMatches[i];
+    const rowHash = await computeHash(row);
+    const rowHashKey = `rowHash_${tableHeader.replace(/\s+/g, '_')}_${i}`;
+    const oldRowHash = await env.MY_KV.get(rowHashKey);
+    
+    console.log(`Row ${i} hash:`, rowHash, "Old hash:", oldRowHash);
+    
+    // If this is a new row or the row has changed
+    if (!oldRowHash || oldRowHash !== rowHash) {
+      // Extract data from this row
+      const dataMatches = row.match(/<td[^>]*><p[^>]*>(.*?)<\/p><\/td>/gi);
+      
+      if (dataMatches) {
+        // Extract data text
+        const data = dataMatches.map(cell => {
+          const match = cell.match(/<p[^>]*>(.*?)<\/p>/);
+          return match ? match[1].trim() : '';
+        });
+        
+        // Create human-readable formatted message with table type
+        let formattedMessage = `**Chelsea Ticket Update - ${tableHeader}:**\n\n`;
+        
+        for (let j = 0; j < Math.min(headers.length, data.length); j++) {
+          if (headers[j] && data[j]) {
+            formattedMessage += `**${headers[j]}:** ${data[j]}\n`;
+          }
+        }
+        
+        changedRows.push(formattedMessage);
+        console.log(`Row ${i} changed:`, formattedMessage);
+      }
+      
+      // Store the new hash for this row
+      await env.MY_KV.put(rowHashKey, rowHash);
+    }
+  }
+  
+  return changedRows;
 }
 
 function extractTicketInformation(tableHtml, tableHeader) {
