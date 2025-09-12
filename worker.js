@@ -100,10 +100,9 @@ async function extractChangedRows(tableHtml, tableHeader, env) {
     const currentObj = buildRowObject(headers, data, opponentName);
     const currentJson = JSON.stringify(currentObj);
     if (previousJson !== currentJson) {
-      const diffText = previousJson ? formatDiff(JSON.parse(previousJson), currentObj) : formatFullRow(currentObj);
       const formattedMessage = `**Chelsea Ticket Update - ${tableHeader}:**
 
-${diffText}`;
+${formatFullRow(currentObj)}`;
       changedRows.push(formattedMessage);
       console.log(`Row ${i} changed for key '${storageKey}':`, formattedMessage);
       await env.MY_KV.put(storageKey, currentJson);
@@ -208,7 +207,11 @@ function formatDiff(prevObj, currObj) {
     const after = currObj[key] || "";
     if (before !== after) {
       const title = formatFieldTitle(key);
-      lines.push(`**${title}:** ${before ? `${before} → ` : ""}${after}`);
+      if (before && after) {
+        lines.push(`**${title}:** ${before} → ${after}`);
+      } else if (after) {
+        lines.push(`**${title}:** ${after}`);
+      }
     }
   }
   return lines.length > 0 ? lines.join("\n") : formatFullRow(currObj);
