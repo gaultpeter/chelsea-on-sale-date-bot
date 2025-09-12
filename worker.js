@@ -188,6 +188,14 @@ function normalizeHeader(text) {
     .replace(/^_+|_+$/g, "");
 }
 
+function formatFieldTitle(key) {
+  return key
+    .replace(/_/g, " ")
+    .split(" ")
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
+}
+
 function normalizeWhitespace(text) {
   return (text || "").replace(/\s+/g, " ").trim();
 }
@@ -199,7 +207,8 @@ function formatDiff(prevObj, currObj) {
     const before = prevObj[key] || "";
     const after = currObj[key] || "";
     if (before !== after) {
-      lines.push(`**${key}:** ${before ? `${before} → ` : ""}${after}`);
+      const title = formatFieldTitle(key);
+      lines.push(`**${title}:** ${before ? `${before} → ` : ""}${after}`);
     }
   }
   return lines.length > 0 ? lines.join("\n") : formatFullRow(currObj);
@@ -208,7 +217,7 @@ function formatDiff(prevObj, currObj) {
 function formatFullRow(obj) {
   return Object.entries(obj)
     .filter(([_, v]) => Boolean(v))
-    .map(([k, v]) => `**${k}:** ${v}`)
+    .map(([k, v]) => `**${formatFieldTitle(k)}:** ${v}`)
     .join("\n");
 }
 async function computeHash(text) {
