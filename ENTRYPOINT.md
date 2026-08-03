@@ -49,7 +49,7 @@ flowchart TD
 | [`worker.js`](file:///C:/Users/Peter/projects/chelsea-on-sale-date-bot/chelsea-on-sale-date-bot/worker.js) | Primary entry point script containing Cloudflare Worker event handlers, scraping logic, KV diffing, and Discord webhook integration. |
 | [`wrangler.jsonc`](file:///C:/Users/Peter/projects/chelsea-on-sale-date-bot/chelsea-on-sale-date-bot/wrangler.jsonc) | Cloudflare Wrangler configuration file specifying worker name, compatibility date, main module file, and KV bindings. |
 | [`README.md`](file:///C:/Users/Peter/projects/chelsea-on-sale-date-bot/chelsea-on-sale-date-bot/README.md) | Deployment and Cloudflare setup manual (Dashboard steps, environment variables, cron configuration). |
-| [`example/`](file:///C:/Users/Peter/projects/chelsea-on-sale-date-bot/chelsea-on-sale-date-bot/example/) | Directory containing reference HTML snapshots of the Chelsea FC ticketing site for test fixture inspection. |
+
 
 ---
 
