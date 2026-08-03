@@ -1,13 +1,17 @@
 {
-	"name": "chelsea-sale-monitor",
-	"compatibility_date": "2025-08-13",
-	"main": "worker.js",
-  
-	"kv_namespaces": [
-	  {
-		"binding": "MY_KV",
-		"id": "ef6655ff9c4e412783ac8298c028fa13"
-	  }
-	]
+  "observability": {
+    "enabled": false,
+    "head_sampling_rate": 1,
+    "logs": {
+      "enabled": true,
+      "head_sampling_rate": 1,
+      "persist": true,
+      "invocation_logs": true
+    },
+    "traces": {
+      "enabled": false,
+      "persist": true,
+      "head_sampling_rate": 1
+    }
   }
-  
+}
