@@ -97,4 +97,5 @@ To automatically check for ticket updates on a schedule:
 
 ## 📖 Developer Architecture & Entry Point
 
-For technical architecture details, function maps, and DOM parsing specs, see [`ENTRYPOINT.md`](file:///C:/Users/Peter/projects/chelsea-on-sale-date-bot/chelsea-on-sale-date-bot/ENTRYPOINT.md).
+For technical architecture details, function maps, and DOM parsing specs, see [`AGENTS.md`](file:///C:/Users/Peter/projects/chelsea-on-sale-date-bot/chelsea-on-sale-date-bot/AGENTS.md).
+
