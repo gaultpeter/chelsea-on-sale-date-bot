@@ -294,34 +294,99 @@ async function computeHash(text) {
 }
 
 async function sendDiscordNotification(webhookUrl, pageUrl, formattedMessage, env) {
-  if (!webhookUrl) throw new Error("Discord webhook URL not set!");
-  console.log("Formatted message:", formattedMessage);
+  if (!webhookUrl) {
+    throw new Error("DISCORD_WEBHOOK_URL is not configured.");
+  }
+
   const userId = env.DISCORD_USER_ID;
-  const content = formattedMessage ? `\u26A1 Chelsea ticket information updated! <@${userId}>
+
+  let content = formattedMessage
+    ? `⚡ Chelsea ticket information updated! ${userId ? `<@${userId}>` : ""}
 
 ${formattedMessage}
 
-View full details: ${pageUrl}` : `\u26A1 Chelsea ticket information updated! <@${userId}>
+View full details: ${pageUrl}`
+    : `⚡ Chelsea ticket information updated! ${userId ? `<@${userId}>` : ""}
 
 View full details: ${pageUrl}`;
-  console.log("Sending discord notification!", {
+
+  // Discord message limit
+  const MAX_LENGTH = 2000;
+
+  if (content.length > MAX_LENGTH) {
+    console.warn(
+      `Discord message too long (${content.length} chars). Truncating to ${MAX_LENGTH}.`
+    );
+
+    content =
+      content.substring(0, MAX_LENGTH - 20) +
+      "\n\n...(truncated)";
+  }
+
+  console.log("Sending Discord notification...", {
     contentLength: content.length,
+    hasWebhook: Boolean(webhookUrl),
     hasUserId: Boolean(userId)
   });
-  try {
-    const res = await fetch(webhookUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content })
-    });
-    const responseText = await res.text();
-    console.log("Discord webhook response:", { status: res.status, ok: res.ok, body: responseText?.slice(0, 500) });
-    if (!res.ok) {
-      throw new Error(`Discord webhook responded with status ${res.status}`);
+
+  const payload = {
+    content
+  };
+
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const res = await fetch(webhookUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(payload)
+      });
+
+      const body = await res.text();
+
+      console.log("Discord response:", {
+        status: res.status,
+        ok: res.ok,
+        body
+      });
+
+      if (res.ok) {
+        console.log("Discord notification sent successfully.");
+        return;
+      }
+
+      // Retry once if Discord rate limits
+      if (res.status === 429 && attempt === 1) {
+        let retryAfter = 2000;
+
+        try {
+          const json = JSON.parse(body);
+          if (json.retry_after) {
+            retryAfter = Math.ceil(json.retry_after);
+          }
+        } catch (_) {}
+
+        console.warn(`Rate limited by Discord. Retrying in ${retryAfter}ms...`);
+
+        await new Promise(resolve => setTimeout(resolve, retryAfter));
+        continue;
+      }
+
+      throw new Error(
+        `Discord webhook failed.\n` +
+        `Status: ${res.status}\n` +
+        `Response: ${body}`
+      );
+
+    } catch (err) {
+      console.error("Failed to send Discord notification:", {
+        message: err?.message,
+        stack: err?.stack
+      });
+
+      throw err;
     }
-  } catch (err) {
-    console.log("Failed to send Discord notification:", err);
-    throw err;
   }
 }
 
