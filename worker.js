@@ -38,7 +38,26 @@ async function runMonitor(env) {
     console.log("newHash", tableHash);
 
     if (!oldHash) {
-      console.log(`No previous hash for '${header}'. Storing current hash and skipping notifications this run.`);
+      console.log(`No previous hash for '${header}'. Treating as first run and sending notifications...`);
+
+      const changedRows = await extractChangedRows(table, header, env);
+
+      if (!changedRows || changedRows.length === 0) {
+        console.log(`No rows found for '${header}'.`);
+      } else {
+        console.log(`Found ${changedRows.length} rows for '${header}'. Sending notifications...`);
+
+        for (const row of changedRows) {
+          try {
+            await sendDiscordNotification(discordWebHookUrl, url, row, env);
+          } catch (err) {
+            console.error("Error sending Discord notification:", {
+              message: err?.message,
+              stack: err?.stack
+            });
+          }
+        }
+      }
     } else if (oldHash === tableHash) {
       console.log(`No change detected for '${header}'.`);
     } else if (oldHash !== tableHash) {
@@ -52,7 +71,10 @@ async function runMonitor(env) {
           try {
             await sendDiscordNotification(discordWebHookUrl, url, row, env);
           } catch (err) {
-            console.log("Error sending Discord notification:", err);
+            console.error("Error sending Discord notification:", {
+              message: err?.message,
+              stack: err?.stack
+            });
           }
         }
       }
