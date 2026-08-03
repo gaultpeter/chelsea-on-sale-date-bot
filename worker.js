@@ -7,22 +7,27 @@ var worker_default = {
     return new Response("Chelsea page monitor run manually!");
   }
 };
+
 async function runMonitor(env) {
   const url = "https://www.chelseafc.com/en/all-on-sale-dates-men";
   const discordWebHookUrl = env.DISCORD_WEBHOOK_URL;
   console.log("runMonitor started", { url, hasWebhook: Boolean(discordWebHookUrl) });
+
   const html = await fetchPage(url);
-  const tables = extractAllTablesFromDataProps(html);
+  const tables = extractAllTables(html);
   if (!tables) {
     console.log("Could not find tables in page HTML");
     return;
   }
+
   const homeTables = tables.filter((table) => !table.header.toLowerCase().includes("away"));
   console.log(`Found ${tables.length} total tables:`, tables.map((t) => t.header));
   console.log(`Monitoring ${homeTables.length} home game tables:`, homeTables.map((t) => t.header));
+
   if (homeTables.length === 0) {
     console.log("No home tables found. Exiting without notifications.");
   }
+
   for (const tableData of homeTables) {
     const { header, table } = tableData;
     const tableHash = await computeHash(table);
@@ -31,6 +36,7 @@ async function runMonitor(env) {
     console.log(`Table: ${header}`);
     console.log("oldHash", oldHash);
     console.log("newHash", tableHash);
+
     if (!oldHash) {
       console.log(`No previous hash for '${header}'. Storing current hash and skipping notifications this run.`);
     } else if (oldHash === tableHash) {
@@ -54,36 +60,87 @@ async function runMonitor(env) {
     await env.MY_KV.put(oldHashKey, tableHash);
   }
 }
+
 async function fetchPage(url) {
   const res = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0" } });
   return await res.text();
 }
-function extractAllTablesFromDataProps(html) {
-  const divMatch = html.match(/<div\s+data-component="GenericContentBlock"\s+data-props="([^"]+)">/i);
-  if (!divMatch) return null;
-  const jsonStr = divMatch[1].replace(/&quot;/g, '"').replace(/\\u0027/g, "'");
-  try {
-    const data = JSON.parse(jsonStr);
-    const bodyHtml = data.body;
-    const tables = [];
-    const tableMatches = bodyHtml.match(/<h2[^>]*>(.*?)<\/h2>[\s\S]*?<table[\s\S]*?<\/table>/gi);
-    if (tableMatches) {
-      tableMatches.forEach((tableSection) => {
-        const headerMatch = tableSection.match(/<h2[^>]*>(.*?)<\/h2>/i);
-        const tableMatch = tableSection.match(/<table[\s\S]*?<\/table>/i);
-        if (headerMatch && tableMatch) {
-          const header = headerMatch[1].trim();
-          const table = tableMatch[0];
-          tables.push({ header, table });
+
+function extractAllTables(htmlContent) {
+  const tables = [];
+
+  // Strategy 1: Direct HTML parsing for rendered table elements with h2 and optional h5 headers
+  const tableMatches = [...htmlContent.matchAll(/<table[\s\S]*?<\/table>/gi)];
+
+  if (tableMatches.length > 0) {
+    tableMatches.forEach((tableMatch) => {
+      const tableIdx = tableMatch.index;
+      const prevHtml = htmlContent.substring(Math.max(0, tableIdx - 2000), tableIdx);
+
+      const h2Matches = [...prevHtml.matchAll(/<h2[^>]*>([\s\S]*?)<\/h2>/gi)];
+      const lastH2Match = h2Matches.length > 0 ? h2Matches[h2Matches.length - 1] : null;
+
+      let title = '';
+      if (lastH2Match) {
+        title = lastH2Match[1].replace(/<[^>]+>/g, '').trim();
+      }
+
+      let category = '';
+      if (lastH2Match) {
+        const h2IndexInPrev = lastH2Match.index;
+        const subPrevHtml = prevHtml.substring(Math.max(0, h2IndexInPrev - 500), h2IndexInPrev);
+        const h5Matches = [...subPrevHtml.matchAll(/<h5[^>]*>([\s\S]*?)<\/h5>/gi)];
+        if (h5Matches.length > 0) {
+          category = h5Matches[h5Matches.length - 1][1].replace(/<[^>]+>/g, '').trim();
         }
-      });
-    }
-    return tables.length > 0 ? tables : null;
-  } catch (err) {
-    console.log("Error parsing JSON:", err);
-    return null;
+      }
+
+      if (title.toLowerCase().includes("on-sale dates")) {
+        title = '';
+      }
+
+      const header = category && title ? `${category} - ${title}` : (title || category || 'Ticket On-Sale Dates');
+      tables.push({ category, title, header, table: tableMatch[0] });
+    });
   }
+
+  // Strategy 2: Fallback to JSON payload inside data-props attribute if no direct tables found
+  if (tables.length === 0) {
+    const divMatch = htmlContent.match(/<div\s+data-component="GenericContentBlock"\s+data-props="([^"]+)">/i);
+    if (divMatch) {
+      const jsonStr = divMatch[1].replace(/&quot;/g, '"').replace(/\\u0027/g, "'");
+      try {
+        const data = JSON.parse(jsonStr);
+        const bodyHtml = data.body;
+        const subTableMatches = [...bodyHtml.matchAll(/<table[\s\S]*?<\/table>/gi)];
+        subTableMatches.forEach((tableMatch) => {
+          const tableIdx = tableMatch.index;
+          const prevHtml = bodyHtml.substring(Math.max(0, tableIdx - 2000), tableIdx);
+          const h2Matches = [...prevHtml.matchAll(/<h2[^>]*>([\s\S]*?)<\/h2>/gi)];
+          const lastH2Match = h2Matches.length > 0 ? h2Matches[h2Matches.length - 1] : null;
+          let title = lastH2Match ? lastH2Match[1].replace(/<[^>]+>/g, '').trim() : '';
+
+          let category = '';
+          if (lastH2Match) {
+            const h2IndexInPrev = lastH2Match.index;
+            const subPrevHtml = prevHtml.substring(Math.max(0, h2IndexInPrev - 500), h2IndexInPrev);
+            const h5Matches = [...subPrevHtml.matchAll(/<h5[^>]*>([\s\S]*?)<\/h5>/gi)];
+            if (h5Matches.length > 0) {
+              category = h5Matches[h5Matches.length - 1][1].replace(/<[^>]+>/g, '').trim();
+            }
+          }
+          const header = category && title ? `${category} - ${title}` : (title || category || 'Ticket On-Sale Dates');
+          tables.push({ category, title, header, table: tableMatch[0] });
+        });
+      } catch (err) {
+        console.log("Error parsing JSON data-props:", err);
+      }
+    }
+  }
+
+  return tables.length > 0 ? tables : null;
 }
+
 async function extractChangedRows(tableHtml, tableHeader, env) {
   const { headers, rows } = parseTableRows(tableHtml);
   if (!headers || !rows) {
@@ -93,16 +150,15 @@ async function extractChangedRows(tableHtml, tableHeader, env) {
   const changedRows = [];
   for (let i = 0; i < rows.length; i++) {
     const data = rows[i];
-    const opponentName = getOpponentName(headers, data);
+    const opponentName = getOpponentName(headers, data, tableHeader);
     const rowKey = buildRowKey(tableHeader, headers, data, opponentName, i);
     const storageKey = `row_${rowKey}`;
     const previousJson = await env.MY_KV.get(storageKey);
     const currentObj = buildRowObject(headers, data, opponentName);
     const currentJson = JSON.stringify(currentObj);
-    if (previousJson !== currentJson) {
-      const formattedMessage = `**Chelsea Ticket Update - ${tableHeader}:**
 
-${formatFullRow(currentObj)}`;
+    if (previousJson !== currentJson) {
+      const formattedMessage = `**Chelsea Ticket Update - ${tableHeader}:**\n\n${formatFullRow(currentObj)}`;
       changedRows.push(formattedMessage);
       console.log(`Row ${i} changed for key '${storageKey}':`, formattedMessage);
       await env.MY_KV.put(storageKey, currentJson);
@@ -119,35 +175,40 @@ function parseTableRows(tableHtml) {
     console.log("No valid table rows found.");
     return { headers: null, rows: null };
   }
+
   const headerRow = trMatches[0];
-  const headerMatches = headerRow.match(/<th[^>]*><p[^>]*>(.*?)<\/p><\/th>/gi);
+  const headerMatches = headerRow.match(/<th[^>]*>(?:<p[^>]*>)?([\s\S]*?)(?:<\/p>)?<\/th>/gi);
   if (!headerMatches) {
     console.log("No headers found in table.");
     return { headers: null, rows: null };
   }
+
   const headers = headerMatches.map((header) => {
-    const match = header.match(/<p[^>]*>(.*?)<\/p>/);
-    return match ? match[1].trim() : "";
+    return header.replace(/<[^>]+>/g, '').trim();
   });
+
   const rows = [];
   for (let i = 1; i < trMatches.length; i++) {
     const row = trMatches[i];
-    const dataMatches = row.match(/<td[^>]*><p[^>]*>(.*?)<\/p><\/td>/gi);
+    const dataMatches = row.match(/<td[^>]*>(?:<p[^>]*>)?([\s\S]*?)(?:<\/p>)?<\/td>/gi);
     const data = dataMatches
-      ? dataMatches.map((cell) => {
-          const match = cell.match(/<p[^>]*>(.*?)<\/p>/);
-          return match ? match[1].trim() : "";
-        })
+      ? dataMatches.map((cell) => cell.replace(/<[^>]+>/g, '').trim())
       : [];
     rows.push(data);
   }
   return { headers, rows };
 }
 
-function getOpponentName(headers, data) {
+function getOpponentName(headers, data, tableHeader) {
   const opponentHeaderIndex = headers.findIndex((h) => /opponent|opposition|fixture|match/i.test(h));
   if (opponentHeaderIndex !== -1 && data[opponentHeaderIndex]) {
     return data[opponentHeaderIndex];
+  }
+  if (tableHeader) {
+    const vMatch = tableHeader.match(/Chelsea\s+vs?\s+([^-\n]+)/i) || tableHeader.match(/([^-\n]+)\s+vs?\s+Chelsea/i);
+    if (vMatch) {
+      return vMatch[1].trim();
+    }
   }
   const candidate = [data[0], data[1]].filter(Boolean).join(" ");
   const vMatch = candidate.match(/v\s+(.*)/i) || candidate.match(/vs\.?\s+(.*)/i);
@@ -173,7 +234,7 @@ function buildRowObject(headers, data, opponentName) {
     const key = normalizeHeader(headers[j]);
     obj[key] = normalizeWhitespace(data[j]);
   }
-  if (opponentName) {
+  if (opponentName && !obj["opponent"]) {
     obj["opponent"] = normalizeWhitespace(opponentName);
   }
   return obj;
@@ -223,6 +284,7 @@ function formatFullRow(obj) {
     .map(([k, v]) => `**${formatFieldTitle(k)}:** ${v}`)
     .join("\n");
 }
+
 async function computeHash(text) {
   const hashBuffer = await crypto.subtle.digest(
     "SHA-256",
@@ -230,6 +292,7 @@ async function computeHash(text) {
   );
   return Array.from(new Uint8Array(hashBuffer)).map((b) => b.toString(16).padStart(2, "0")).join("");
 }
+
 async function sendDiscordNotification(webhookUrl, pageUrl, formattedMessage, env) {
   if (!webhookUrl) throw new Error("Discord webhook URL not set!");
   console.log("Formatted message:", formattedMessage);
@@ -261,6 +324,7 @@ View full details: ${pageUrl}`;
     throw err;
   }
 }
+
 export {
   worker_default as default
 };
