@@ -253,6 +253,7 @@ function buildRowKey(tableHeader, headers, data, opponentName, index) {
 function buildRowObject(headers, data, opponentName) {
   const obj = {};
   for (let j = 0; j < Math.min(headers.length, data.length); j++) {
+    if (/access/i.test(headers[j])) continue;
     const key = normalizeHeader(headers[j]);
     obj[key] = normalizeWhitespace(data[j]);
   }
@@ -283,7 +284,8 @@ function normalizeWhitespace(text) {
 }
 
 function formatDiff(prevObj, currObj) {
-  const keys = Array.from(new Set([...Object.keys(prevObj), ...Object.keys(currObj)]));
+  const keys = Array.from(new Set([...Object.keys(prevObj), ...Object.keys(currObj)]))
+    .filter(key => !/access/i.test(key));
   const lines = [];
   for (const key of keys) {
     const before = prevObj[key] || "";
@@ -302,7 +304,7 @@ function formatDiff(prevObj, currObj) {
 
 function formatFullRow(obj) {
   return Object.entries(obj)
-    .filter(([_, v]) => Boolean(v))
+    .filter(([k, v]) => Boolean(v) && !/access/i.test(k))
     .map(([k, v]) => `**${formatFieldTitle(k)}:** ${v}`)
     .join("\n");
 }
