@@ -88,8 +88,50 @@ async function fetchPage(url) {
   return await res.text();
 }
 
+function cleanHtmlText(text) {
+  if (!text) return '';
+  return text
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/\\u0027/g, "'")
+    .replace(/&ndash;/gi, '-')
+    .replace(/&mdash;/gi, '-')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 function extractAllTables(htmlContent) {
   const tables = [];
+
+  const parseSectionHeaders = (htmlBeforeTable) => {
+    const h2Matches = [...htmlBeforeTable.matchAll(/<h2[^>]*>([\s\S]*?)<\/h2>/gi)];
+    const lastH2Match = h2Matches.length > 0 ? h2Matches[h2Matches.length - 1] : null;
+
+    let title = '';
+    if (lastH2Match) {
+      title = cleanHtmlText(lastH2Match[1]);
+    }
+
+    let category = '';
+    if (lastH2Match) {
+      const h2IndexInPrev = lastH2Match.index;
+      const subPrevHtml = htmlBeforeTable.substring(Math.max(0, h2IndexInPrev - 500), h2IndexInPrev);
+      const h5Matches = [...subPrevHtml.matchAll(/<h5[^>]*>([\s\S]*?)<\/h5>/gi)];
+      if (h5Matches.length > 0) {
+        category = cleanHtmlText(h5Matches[h5Matches.length - 1][1]);
+      }
+    }
+
+    if (title.toLowerCase().includes("on-sale dates")) {
+      title = '';
+    }
+
+    const header = category && title ? `${category} - ${title}` : (title || category || 'Ticket On-Sale Dates');
+    return { category, title, header };
+  };
 
   // Strategy 1: Direct HTML parsing for rendered table elements with h2 and optional h5 headers
   const tableMatches = [...htmlContent.matchAll(/<table[\s\S]*?<\/table>/gi)];
@@ -98,30 +140,7 @@ function extractAllTables(htmlContent) {
     tableMatches.forEach((tableMatch) => {
       const tableIdx = tableMatch.index;
       const prevHtml = htmlContent.substring(Math.max(0, tableIdx - 2000), tableIdx);
-
-      const h2Matches = [...prevHtml.matchAll(/<h2[^>]*>([\s\S]*?)<\/h2>/gi)];
-      const lastH2Match = h2Matches.length > 0 ? h2Matches[h2Matches.length - 1] : null;
-
-      let title = '';
-      if (lastH2Match) {
-        title = lastH2Match[1].replace(/<[^>]+>/g, '').trim();
-      }
-
-      let category = '';
-      if (lastH2Match) {
-        const h2IndexInPrev = lastH2Match.index;
-        const subPrevHtml = prevHtml.substring(Math.max(0, h2IndexInPrev - 500), h2IndexInPrev);
-        const h5Matches = [...subPrevHtml.matchAll(/<h5[^>]*>([\s\S]*?)<\/h5>/gi)];
-        if (h5Matches.length > 0) {
-          category = h5Matches[h5Matches.length - 1][1].replace(/<[^>]+>/g, '').trim();
-        }
-      }
-
-      if (title.toLowerCase().includes("on-sale dates")) {
-        title = '';
-      }
-
-      const header = category && title ? `${category} - ${title}` : (title || category || 'Ticket On-Sale Dates');
+      const { category, title, header } = parseSectionHeaders(prevHtml);
       tables.push({ category, title, header, table: tableMatch[0] });
     });
   }
@@ -133,25 +152,12 @@ function extractAllTables(htmlContent) {
       const jsonStr = divMatch[1].replace(/&quot;/g, '"').replace(/\\u0027/g, "'");
       try {
         const data = JSON.parse(jsonStr);
-        const bodyHtml = data.body;
+        const bodyHtml = data.body || '';
         const subTableMatches = [...bodyHtml.matchAll(/<table[\s\S]*?<\/table>/gi)];
         subTableMatches.forEach((tableMatch) => {
           const tableIdx = tableMatch.index;
           const prevHtml = bodyHtml.substring(Math.max(0, tableIdx - 2000), tableIdx);
-          const h2Matches = [...prevHtml.matchAll(/<h2[^>]*>([\s\S]*?)<\/h2>/gi)];
-          const lastH2Match = h2Matches.length > 0 ? h2Matches[h2Matches.length - 1] : null;
-          let title = lastH2Match ? lastH2Match[1].replace(/<[^>]+>/g, '').trim() : '';
-
-          let category = '';
-          if (lastH2Match) {
-            const h2IndexInPrev = lastH2Match.index;
-            const subPrevHtml = prevHtml.substring(Math.max(0, h2IndexInPrev - 500), h2IndexInPrev);
-            const h5Matches = [...subPrevHtml.matchAll(/<h5[^>]*>([\s\S]*?)<\/h5>/gi)];
-            if (h5Matches.length > 0) {
-              category = h5Matches[h5Matches.length - 1][1].replace(/<[^>]+>/g, '').trim();
-            }
-          }
-          const header = category && title ? `${category} - ${title}` : (title || category || 'Ticket On-Sale Dates');
+          const { category, title, header } = parseSectionHeaders(prevHtml);
           tables.push({ category, title, header, table: tableMatch[0] });
         });
       } catch (err) {
@@ -199,24 +205,44 @@ function parseTableRows(tableHtml) {
   }
 
   const headerRow = trMatches[0];
-  const headerMatches = headerRow.match(/<th[^>]*>(?:<p[^>]*>)?([\s\S]*?)(?:<\/p>)?<\/th>/gi);
-  if (!headerMatches) {
-    console.log("No headers found in table.");
-    return { headers: null, rows: null };
-  }
+  const thMatches = [...headerRow.matchAll(/<th[^>]*>([\s\S]*?)<\/th>/gi)];
 
-  const headers = headerMatches.map((header) => {
-    return header.replace(/<[^>]+>/g, '').trim();
-  });
+  let headers = [];
+  if (thMatches.length > 0) {
+    headers = thMatches.map((m, idx) => {
+      const text = cleanHtmlText(m[1]);
+      if (!text && idx === 0) {
+        return 'Member Type';
+      }
+      return text || `Column ${idx + 1}`;
+    });
+  } else {
+    const tdMatches = [...headerRow.matchAll(/<td[^>]*>([\s\S]*?)<\/td>/gi)];
+    headers = tdMatches.map((m, idx) => {
+      const text = cleanHtmlText(m[1]);
+      if (!text && idx === 0) {
+        return 'Member Type';
+      }
+      return text || `Column ${idx + 1}`;
+    });
+  }
 
   const rows = [];
   for (let i = 1; i < trMatches.length; i++) {
-    const row = trMatches[i];
-    const dataMatches = row.match(/<td[^>]*>(?:<p[^>]*>)?([\s\S]*?)(?:<\/p>)?<\/td>/gi);
-    const data = dataMatches
-      ? dataMatches.map((cell) => cell.replace(/<[^>]+>/g, '').trim())
-      : [];
-    rows.push(data);
+    const rowHtml = trMatches[i];
+    const cellMatches = [...rowHtml.matchAll(/<td[^>]*>([\s\S]*?)<\/td>/gi)];
+    if (cellMatches.length > 0) {
+      const data = cellMatches.map((m) => cleanHtmlText(m[1]));
+      if (data.some(Boolean)) {
+        // Filter out accessibility ticket rows as user is True Blue normal release member
+        const firstCell = data[0] || '';
+        if (/access/i.test(firstCell)) {
+          console.log(`Skipping accessibility row: "${firstCell}"`);
+          continue;
+        }
+        rows.push(data);
+      }
+    }
   }
   return { headers, rows };
 }
@@ -243,7 +269,8 @@ function buildRowKey(tableHeader, headers, data, opponentName, index) {
   const date = dateIndex !== -1 ? normalizeWhitespace(data[dateIndex] || "") : "";
   const competition = competitionIndex !== -1 ? normalizeWhitespace(data[competitionIndex] || "") : "";
   const opponent = normalizeWhitespace(opponentName || "");
-  const parts = [tableHeader, date, opponent, competition]
+  const rowType = data[0] || "";
+  const parts = [tableHeader, rowType, date, opponent, competition, `row_${index}`]
     .map((p) => p.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, ""))
     .filter(Boolean);
   const base = parts.join("_");
@@ -255,7 +282,9 @@ function buildRowObject(headers, data, opponentName) {
   for (let j = 0; j < Math.min(headers.length, data.length); j++) {
     if (/access/i.test(headers[j])) continue;
     const key = normalizeHeader(headers[j]);
-    obj[key] = normalizeWhitespace(data[j]);
+    if (key) {
+      obj[key] = normalizeWhitespace(data[j]);
+    }
   }
   if (opponentName && !obj["opponent"]) {
     obj["opponent"] = normalizeWhitespace(opponentName);
