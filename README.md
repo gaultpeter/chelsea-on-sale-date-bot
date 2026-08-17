@@ -69,10 +69,7 @@ npx wrangler deploy
 
 ## Schedule
 
-Configured in [`wrangler.jsonc`](./wrangler.jsonc) (cron, UTC):
-
-- `*/15 8-20 * * mon-fri` — every 15 minutes on weekdays
-- `0 9,12,15,18 * * sat-sun` — 4× daily on weekends
+The sale bot can be run on a cron trigger if your Cloudflare account has spare cron slots (the Free plan allows 5 total across all workers). Add one in the dashboard: **Worker → Triggers → Cron Triggers**, or declare it in [`wrangler.jsonc`](./wrangler.jsonc). Otherwise trigger it manually via `GET /` or the deploy pipeline.
 
 ## Endpoints
 
