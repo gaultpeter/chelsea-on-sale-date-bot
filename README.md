@@ -1,5 +1,9 @@
 # Chelsea On-Sale Date Bot
 
+[![Cloudflare Workers](https://img.shields.io/badge/Cloudflare%20Workers-F38020?logo=cloudflare&logoColor=white)](https://workers.cloudflare.com)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+[![Discord](https://img.shields.io/badge/Discord-notifications-5865F2?logo=discord&logoColor=white)](https://discord.com)
+
 Cloudflare Worker that monitors Chelsea FC's **men's home** ticket on-sale dates and ballot application windows, and posts a Discord notification whenever a date changes.
 
 ## Features
@@ -9,6 +13,20 @@ Cloudflare Worker that monitors Chelsea FC's **men's home** ticket on-sale dates
 - **Granular change detection** — SHA-256 hashes per table, plus per-row state in Cloudflare KV, so you only get notified about the exact rows that changed
 - **Robust parsing** — reads the live table HTML with a fallback to the embedded JSON data
 - **Discord alerts** — formatted Markdown message with the updated dates and a link to the full page
+
+## Prerequisites
+
+- Node.js 18+
+- A Cloudflare account with Workers and KV enabled
+- A Discord server where you can create webhooks
+
+## Quick start
+
+```bash
+git clone https://github.com/gaultpeter/chelsea-on-sale-date-bot.git
+cd chelsea-on-sale-date-bot
+npx wrangler dev    # local dev server
+```
 
 ## How it works
 
@@ -41,21 +59,28 @@ Create a KV namespace (Workers & Pages → KV) and set its `id` in [`wrangler.js
 npx wrangler secret put DISCORD_WEBHOOK_URL
 ```
 
-### 4. Deploy
+## Deploy
 
-Push to `main` to auto-deploy via Cloudflare's Git integration, or deploy manually:
+Pushing to `main` auto-deploys via Cloudflare's Git integration. To deploy manually:
 
 ```bash
 npx wrangler deploy
 ```
 
-### 5. Schedule
+## Schedule
 
-Add a cron trigger in the dashboard (Triggers → Cron Triggers), e.g. `0 19 * * mon-fri` for weekdays at 7pm.
+Configured in [`wrangler.jsonc`](./wrangler.jsonc) (cron, UTC):
+
+- `*/15 8-20 * * mon-fri` — every 15 minutes on weekdays
+- `0 9,12,15,18 * * sat-sun` — 4× daily on weekends
 
 ## Endpoints
 
 - `GET /` — run a check manually
+
+## License
+
+[MIT](./LICENSE)
 
 ## Architecture
 
