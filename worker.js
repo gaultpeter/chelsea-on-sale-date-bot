@@ -1,4 +1,8 @@
-var worker_default = {
+const TARGET_URL = "https://www.chelseafc.com/en/all-on-sale-dates-men";
+const USER_AGENT = "Mozilla/5.0";
+const DISCORD_MAX_LENGTH = 2000;
+
+export default {
   async scheduled(event, env, ctx) {
     await runMonitor(env);
   },
@@ -8,158 +12,114 @@ var worker_default = {
   }
 };
 
+/**
+ * Main monitor: scrape the men's on-sale dates page, diff each home table
+ * against KV, and notify Discord about changed rows.
+ */
 async function runMonitor(env) {
-  const url = "https://www.chelseafc.com/en/all-on-sale-dates-men";
-  const discordWebHookUrl = env.DISCORD_WEBHOOK_URL;
-  console.log("runMonitor started", { url, hasWebhook: Boolean(discordWebHookUrl) });
+  const discordWebhookUrl = env.DISCORD_WEBHOOK_URL;
+  console.log("runMonitor started", { url: TARGET_URL, hasWebhook: Boolean(discordWebhookUrl) });
 
-  const html = await fetchPage(url);
+  const html = await fetchPage(TARGET_URL);
   const tables = extractAllTables(html);
   if (!tables) {
     console.log("Could not find tables in page HTML");
     return;
   }
 
-  const homeTables = tables.filter((table) => !table.header.toLowerCase().includes("away"));
-  console.log(`Found ${tables.length} total tables:`, tables.map((t) => t.header));
-  console.log(`Monitoring ${homeTables.length} home game tables:`, homeTables.map((t) => t.header));
+  const homeTables = tables.filter(table => !table.header.toLowerCase().includes("away"));
+  console.log(`Found ${tables.length} total tables:`, tables.map(t => t.header));
+  console.log(`Monitoring ${homeTables.length} home game tables:`, homeTables.map(t => t.header));
 
-  if (homeTables.length === 0) {
-    console.log("No home tables found. Exiting without notifications.");
-  }
-
-  for (const tableData of homeTables) {
-    const { header, table } = tableData;
+  for (const { header, table } of homeTables) {
     const tableHash = await computeHash(table);
-    const oldHashKey = `lastHash_${header.replace(/\s+/g, "_")}`;
-    const oldHash = await env.MY_KV.get(oldHashKey);
-    console.log(`Table: ${header}`);
-    console.log("oldHash", oldHash);
-    console.log("newHash", tableHash);
+    const hashKey = `lastHash_${header.replace(/\s+/g, "_")}`;
+    const oldHash = await env.MY_KV.get(hashKey);
 
-    if (!oldHash) {
-      console.log(`No previous hash for '${header}'. Treating as first run and sending notifications...`);
-
-      const changedRows = await extractChangedRows(table, header, env);
-
-      if (!changedRows || changedRows.length === 0) {
-        console.log(`No rows found for '${header}'.`);
-      } else {
-        console.log(`Found ${changedRows.length} rows for '${header}'. Sending notifications...`);
-
-        for (const row of changedRows) {
-          try {
-            await sendDiscordNotification(discordWebHookUrl, url, row, env);
-          } catch (err) {
-            console.error("Error sending Discord notification:", {
-              message: err?.message,
-              stack: err?.stack
-            });
-          }
-        }
-      }
-    } else if (oldHash === tableHash) {
+    if (oldHash === tableHash) {
       console.log(`No change detected for '${header}'.`);
-    } else if (oldHash !== tableHash) {
-      console.log(`Change detected for '${header}'. Extracting changed rows...`);
-      const changedRows = await extractChangedRows(table, header, env);
-      if (!changedRows || changedRows.length === 0) {
-        console.log(`Table hash changed but no changed rows extracted for '${header}'.`);
-      } else {
-        console.log(`Found ${changedRows.length} changed rows for '${header}'. Sending notifications...`);
-        for (const row of changedRows) {
-          try {
-            await sendDiscordNotification(discordWebHookUrl, url, row, env);
-          } catch (err) {
-            console.error("Error sending Discord notification:", {
-              message: err?.message,
-              stack: err?.stack
-            });
-          }
+      continue;
+    }
+
+    const changedRows = await extractChangedRows(table, header, env);
+    if (changedRows.length === 0) {
+      console.log(`No changed rows extracted for '${header}'.`);
+    } else {
+      console.log(`Found ${changedRows.length} changed rows for '${header}'. Sending notifications...`);
+      for (const row of changedRows) {
+        try {
+          await sendDiscordNotification(discordWebhookUrl, row, env.DISCORD_USER_ID);
+        } catch (err) {
+          console.error("Error sending Discord notification:", err?.message);
         }
       }
     }
-    await env.MY_KV.put(oldHashKey, tableHash);
+
+    await env.MY_KV.put(hashKey, tableHash);
   }
 }
 
 async function fetchPage(url) {
-  const res = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0" } });
+  const res = await fetch(url, { headers: { "User-Agent": USER_AGENT } });
+  if (!res.ok) throw new Error(`Failed to fetch ${url}: ${res.status}`);
   return await res.text();
 }
 
 function cleanHtmlText(text) {
-  if (!text) return '';
+  if (!text) return "";
   return text
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&nbsp;/gi, ' ')
-    .replace(/&amp;/gi, '&')
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
     .replace(/&quot;/gi, '"')
     .replace(/&#39;/gi, "'")
     .replace(/\\u0027/g, "'")
-    .replace(/&ndash;/gi, '-')
-    .replace(/&mdash;/gi, '-')
-    .replace(/\s+/g, ' ')
+    .replace(/&ndash;/gi, "-")
+    .replace(/&mdash;/gi, "-")
+    .replace(/\s+/g, " ")
     .trim();
 }
 
+/**
+ * Extract all tables from the page, paired with their section heading
+ * (competition + fixture title). Falls back to the JSON payload embedded in
+ * the GenericContentBlock data-props attribute if no rendered tables exist.
+ */
 function extractAllTables(htmlContent) {
   const tables = [];
 
-  const parseSectionHeaders = (htmlBeforeTable) => {
+  const parseSectionHeaders = htmlBeforeTable => {
     const h2Matches = [...htmlBeforeTable.matchAll(/<h2[^>]*>([\s\S]*?)<\/h2>/gi)];
-    const lastH2Match = h2Matches.length > 0 ? h2Matches[h2Matches.length - 1] : null;
+    const lastH2 = h2Matches.length > 0 ? h2Matches[h2Matches.length - 1] : null;
 
-    let title = '';
-    if (lastH2Match) {
-      title = cleanHtmlText(lastH2Match[1]);
+    let title = lastH2 ? cleanHtmlText(lastH2[1]) : "";
+    let category = "";
+    if (lastH2) {
+      const subPrev = htmlBeforeTable.substring(Math.max(0, lastH2.index - 500), lastH2.index);
+      const h5Matches = [...subPrev.matchAll(/<h5[^>]*>([\s\S]*?)<\/h5>/gi)];
+      if (h5Matches.length > 0) category = cleanHtmlText(h5Matches[h5Matches.length - 1][1]);
     }
 
-    let category = '';
-    if (lastH2Match) {
-      const h2IndexInPrev = lastH2Match.index;
-      const subPrevHtml = htmlBeforeTable.substring(Math.max(0, h2IndexInPrev - 500), h2IndexInPrev);
-      const h5Matches = [...subPrevHtml.matchAll(/<h5[^>]*>([\s\S]*?)<\/h5>/gi)];
-      if (h5Matches.length > 0) {
-        category = cleanHtmlText(h5Matches[h5Matches.length - 1][1]);
-      }
-    }
-
-    if (title.toLowerCase().includes("on-sale dates")) {
-      title = '';
-    }
-
-    const header = category && title ? `${category} - ${title}` : (title || category || 'Ticket On-Sale Dates');
-    return { category, title, header };
+    if (title.toLowerCase().includes("on-sale dates")) title = "";
+    return { category, title, header: category && title ? `${category} - ${title}` : (title || category || "Ticket On-Sale Dates") };
   };
 
-  // Strategy 1: Direct HTML parsing for rendered table elements with h2 and optional h5 headers
-  const tableMatches = [...htmlContent.matchAll(/<table[\s\S]*?<\/table>/gi)];
-
-  if (tableMatches.length > 0) {
-    tableMatches.forEach((tableMatch) => {
-      const tableIdx = tableMatch.index;
-      const prevHtml = htmlContent.substring(Math.max(0, tableIdx - 2000), tableIdx);
+  const addTables = html => {
+    for (const tableMatch of html.matchAll(/<table[\s\S]*?<\/table>/gi)) {
+      const prevHtml = html.substring(Math.max(0, tableMatch.index - 2000), tableMatch.index);
       const { category, title, header } = parseSectionHeaders(prevHtml);
       tables.push({ category, title, header, table: tableMatch[0] });
-    });
-  }
+    }
+  };
 
-  // Strategy 2: Fallback to JSON payload inside data-props attribute if no direct tables found
+  addTables(htmlContent);
+
   if (tables.length === 0) {
     const divMatch = htmlContent.match(/<div\s+data-component="GenericContentBlock"\s+data-props="([^"]+)">/i);
     if (divMatch) {
-      const jsonStr = divMatch[1].replace(/&quot;/g, '"').replace(/\\u0027/g, "'");
       try {
-        const data = JSON.parse(jsonStr);
-        const bodyHtml = data.body || '';
-        const subTableMatches = [...bodyHtml.matchAll(/<table[\s\S]*?<\/table>/gi)];
-        subTableMatches.forEach((tableMatch) => {
-          const tableIdx = tableMatch.index;
-          const prevHtml = bodyHtml.substring(Math.max(0, tableIdx - 2000), tableIdx);
-          const { category, title, header } = parseSectionHeaders(prevHtml);
-          tables.push({ category, title, header, table: tableMatch[0] });
-        });
+        const data = JSON.parse(divMatch[1].replace(/&quot;/g, '"').replace(/\\u0027/g, "'"));
+        addTables(data.body || "");
       } catch (err) {
         console.log("Error parsing JSON data-props:", err);
       }
@@ -169,30 +129,34 @@ function extractAllTables(htmlContent) {
   return tables.length > 0 ? tables : null;
 }
 
+/**
+ * Diff each table row against its stored KV state and return formatted
+ * messages for rows that changed or are new.
+ */
 async function extractChangedRows(tableHtml, tableHeader, env) {
   const { headers, rows } = parseTableRows(tableHtml);
-  if (!headers || !rows) {
-    return [];
-  }
-  console.log("Table headers detected:", headers);
-  const changedRows = [];
-  for (let i = 0; i < rows.length; i++) {
-    const data = rows[i];
-    const opponentName = getOpponentName(headers, data, tableHeader);
-    const rowKey = buildRowKey(tableHeader, headers, data, opponentName, i);
-    const storageKey = `row_${rowKey}`;
-    const previousJson = await env.MY_KV.get(storageKey);
-    const currentObj = buildRowObject(headers, data, opponentName);
-    const currentJson = JSON.stringify(currentObj);
+  if (!headers || !rows) return [];
 
-    if (previousJson !== currentJson) {
-      const formattedMessage = `**Chelsea Ticket Update - ${tableHeader}:**\n\n${formatFullRow(currentObj)}`;
-      changedRows.push(formattedMessage);
-      console.log(`Row ${i} changed for key '${storageKey}':`, formattedMessage);
-      await env.MY_KV.put(storageKey, currentJson);
-    } else {
+  const prepared = rows.map((data, i) => {
+    const opponentName = getOpponentName(headers, data, tableHeader);
+    const storageKey = `row_${buildRowKey(tableHeader, headers, data, opponentName, i)}`;
+    return { data, opponentName, storageKey, currentObj: buildRowObject(headers, data, opponentName) };
+  });
+
+  const previous = await Promise.all(prepared.map(p => env.MY_KV.get(p.storageKey)));
+
+  const changedRows = [];
+  for (let i = 0; i < prepared.length; i++) {
+    const { storageKey, currentObj } = prepared[i];
+    const currentJson = JSON.stringify(currentObj);
+    if (previous[i] === currentJson) {
       console.log(`Row ${i} unchanged for key '${storageKey}'.`);
+      continue;
     }
+    const formattedMessage = `**Chelsea Ticket Update - ${tableHeader}:**\n\n${formatFullRow(currentObj)}`;
+    changedRows.push(formattedMessage);
+    console.log(`Row ${i} changed for key '${storageKey}':`, formattedMessage);
+    await env.MY_KV.put(storageKey, currentJson);
   }
   return changedRows;
 }
@@ -206,57 +170,31 @@ function parseTableRows(tableHtml) {
 
   const headerRow = trMatches[0];
   const thMatches = [...headerRow.matchAll(/<th[^>]*>([\s\S]*?)<\/th>/gi)];
-
-  let headers = [];
-  if (thMatches.length > 0) {
-    headers = thMatches.map((m, idx) => {
-      const text = cleanHtmlText(m[1]);
-      if (!text && idx === 0) {
-        return 'Member Type';
-      }
-      return text || `Column ${idx + 1}`;
-    });
-  } else {
-    const tdMatches = [...headerRow.matchAll(/<td[^>]*>([\s\S]*?)<\/td>/gi)];
-    headers = tdMatches.map((m, idx) => {
-      const text = cleanHtmlText(m[1]);
-      if (!text && idx === 0) {
-        return 'Member Type';
-      }
-      return text || `Column ${idx + 1}`;
-    });
-  }
+  const cellSources = thMatches.length > 0 ? thMatches.map(m => m[1]) : [...headerRow.matchAll(/<td[^>]*>([\s\S]*?)<\/td>/gi)].map(m => m[1]);
+  const headers = cellSources.map((text, idx) => {
+    const clean = cleanHtmlText(text);
+    return clean || (idx === 0 ? "Member Type" : `Column ${idx + 1}`);
+  });
 
   const rows = [];
   for (let i = 1; i < trMatches.length; i++) {
-    const rowHtml = trMatches[i];
-    const cellMatches = [...rowHtml.matchAll(/<td[^>]*>([\s\S]*?)<\/td>/gi)];
-    if (cellMatches.length > 0) {
-      const data = cellMatches.map((m) => cleanHtmlText(m[1]));
-      if (data.some(Boolean)) {
-        // Filter out accessibility ticket rows as user is True Blue normal release member
-        const firstCell = data[0] || '';
-        if (/access/i.test(firstCell)) {
-          console.log(`Skipping accessibility row: "${firstCell}"`);
-          continue;
-        }
-        rows.push(data);
-      }
-    }
+    const data = [...trMatches[i].matchAll(/<td[^>]*>([\s\S]*?)<\/td>/gi)].map(m => cleanHtmlText(m[1]));
+    if (!data.some(Boolean)) continue;
+    if (/access/i.test(data[0] || "")) continue; // accessibility rows are not relevant
+    rows.push(data);
   }
+
   return { headers, rows };
 }
 
 function getOpponentName(headers, data, tableHeader) {
-  const opponentHeaderIndex = headers.findIndex((h) => /opponent|opposition|fixture|match/i.test(h));
+  const opponentHeaderIndex = headers.findIndex(h => /opponent|opposition|fixture|match/i.test(h));
   if (opponentHeaderIndex !== -1 && data[opponentHeaderIndex]) {
     return data[opponentHeaderIndex];
   }
   if (tableHeader) {
     const vMatch = tableHeader.match(/Chelsea\s+vs?\s+([^-\n]+)/i) || tableHeader.match(/([^-\n]+)\s+vs?\s+Chelsea/i);
-    if (vMatch) {
-      return vMatch[1].trim();
-    }
+    if (vMatch) return vMatch[1].trim();
   }
   const candidate = [data[0], data[1]].filter(Boolean).join(" ");
   const vMatch = candidate.match(/v\s+(.*)/i) || candidate.match(/vs\.?\s+(.*)/i);
@@ -264,17 +202,15 @@ function getOpponentName(headers, data, tableHeader) {
 }
 
 function buildRowKey(tableHeader, headers, data, opponentName, index) {
-  const dateIndex = headers.findIndex((h) => /date/i.test(h));
-  const competitionIndex = headers.findIndex((h) => /competition|tournament/i.test(h));
+  const dateIndex = headers.findIndex(h => /date/i.test(h));
+  const competitionIndex = headers.findIndex(h => /competition|tournament/i.test(h));
   const date = dateIndex !== -1 ? normalizeWhitespace(data[dateIndex] || "") : "";
   const competition = competitionIndex !== -1 ? normalizeWhitespace(data[competitionIndex] || "") : "";
   const opponent = normalizeWhitespace(opponentName || "");
-  const rowType = data[0] || "";
-  const parts = [tableHeader, rowType, date, opponent, competition, `row_${index}`]
-    .map((p) => p.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, ""))
+  const parts = [tableHeader, data[0] || "", date, opponent, competition, `row_${index}`]
+    .map(p => p.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, ""))
     .filter(Boolean);
-  const base = parts.join("_");
-  return base || `${tableHeader.replace(/\s+/g, "_")}_row_${index}`;
+  return parts.join("_") || `${tableHeader.replace(/\s+/g, "_")}_row_${index}`;
 }
 
 function buildRowObject(headers, data, opponentName) {
@@ -282,13 +218,9 @@ function buildRowObject(headers, data, opponentName) {
   for (let j = 0; j < Math.min(headers.length, data.length); j++) {
     if (/access/i.test(headers[j])) continue;
     const key = normalizeHeader(headers[j]);
-    if (key) {
-      obj[key] = normalizeWhitespace(data[j]);
-    }
+    if (key) obj[key] = normalizeWhitespace(data[j]);
   }
-  if (opponentName && !obj["opponent"]) {
-    obj["opponent"] = normalizeWhitespace(opponentName);
-  }
+  if (opponentName && !obj.opponent) obj.opponent = normalizeWhitespace(opponentName);
   return obj;
 }
 
@@ -312,25 +244,6 @@ function normalizeWhitespace(text) {
   return (text || "").replace(/\s+/g, " ").trim();
 }
 
-function formatDiff(prevObj, currObj) {
-  const keys = Array.from(new Set([...Object.keys(prevObj), ...Object.keys(currObj)]))
-    .filter(key => !/access/i.test(key));
-  const lines = [];
-  for (const key of keys) {
-    const before = prevObj[key] || "";
-    const after = currObj[key] || "";
-    if (before !== after) {
-      const title = formatFieldTitle(key);
-      if (before && after) {
-        lines.push(`**${title}:** ${before} → ${after}`);
-      } else if (after) {
-        lines.push(`**${title}:** ${after}`);
-      }
-    }
-  }
-  return lines.length > 0 ? lines.join("\n") : formatFullRow(currObj);
-}
-
 function formatFullRow(obj) {
   return Object.entries(obj)
     .filter(([k, v]) => Boolean(v) && !/access/i.test(k))
@@ -339,110 +252,52 @@ function formatFullRow(obj) {
 }
 
 async function computeHash(text) {
-  const hashBuffer = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(text)
-  );
-  return Array.from(new Uint8Array(hashBuffer)).map((b) => b.toString(16).padStart(2, "0")).join("");
+  const hashBuffer = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  return Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, "0")).join("");
 }
 
-async function sendDiscordNotification(webhookUrl, pageUrl, formattedMessage, env) {
-  if (!webhookUrl) {
-    throw new Error("DISCORD_WEBHOOK_URL is not configured.");
-  }
+async function sendDiscordNotification(webhookUrl, formattedMessage, userId) {
+  if (!webhookUrl) throw new Error("DISCORD_WEBHOOK_URL is not configured.");
 
-  const userId = env.DISCORD_USER_ID;
-
+  const mention = userId ? `<@${userId}>` : "";
+  const header = "⚡ Chelsea ticket information updated!";
   let content = formattedMessage
-    ? `⚡ Chelsea ticket information updated! ${userId ? `<@${userId}>` : ""}
+    ? `${header} ${mention}\n\n${formattedMessage}\n\nView full details: ${TARGET_URL}`
+    : `${header} ${mention}\n\nView full details: ${TARGET_URL}`;
 
-${formattedMessage}
-
-View full details: ${pageUrl}`
-    : `⚡ Chelsea ticket information updated! ${userId ? `<@${userId}>` : ""}
-
-View full details: ${pageUrl}`;
-
-  // Discord message limit
-  const MAX_LENGTH = 2000;
-
-  if (content.length > MAX_LENGTH) {
-    console.warn(
-      `Discord message too long (${content.length} chars). Truncating to ${MAX_LENGTH}.`
-    );
-
-    content =
-      content.substring(0, MAX_LENGTH - 20) +
-      "\n\n...(truncated)";
+  if (content.length > DISCORD_MAX_LENGTH) {
+    content = content.substring(0, DISCORD_MAX_LENGTH - 20) + "\n\n...(truncated)";
   }
-
-  console.log("Sending Discord notification...", {
-    contentLength: content.length,
-    hasWebhook: Boolean(webhookUrl),
-    hasUserId: Boolean(userId)
-  });
-
-  const payload = {
-    content
-  };
 
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
       const res = await fetch(webhookUrl, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify(payload)
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content })
       });
-
       const body = await res.text();
-
-      console.log("Discord response:", {
-        status: res.status,
-        ok: res.ok,
-        body
-      });
 
       if (res.ok) {
         console.log("Discord notification sent successfully.");
         return;
       }
 
-      // Retry once if Discord rate limits
       if (res.status === 429 && attempt === 1) {
         let retryAfter = 2000;
-
         try {
           const json = JSON.parse(body);
-          if (json.retry_after) {
-            retryAfter = Math.ceil(json.retry_after);
-          }
+          if (json.retry_after) retryAfter = Math.ceil(json.retry_after * 1000);
         } catch (_) {}
-
         console.warn(`Rate limited by Discord. Retrying in ${retryAfter}ms...`);
-
         await new Promise(resolve => setTimeout(resolve, retryAfter));
         continue;
       }
 
-      throw new Error(
-        `Discord webhook failed.\n` +
-        `Status: ${res.status}\n` +
-        `Response: ${body}`
-      );
-
+      throw new Error(`Discord webhook failed. Status: ${res.status}. Response: ${body}`);
     } catch (err) {
-      console.error("Failed to send Discord notification:", {
-        message: err?.message,
-        stack: err?.stack
-      });
-
+      console.error("Failed to send Discord notification:", err?.message);
       throw err;
     }
   }
 }
-
-export {
-  worker_default as default
-};
